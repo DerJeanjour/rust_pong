@@ -6,6 +6,7 @@ const WINDOW_FPS : u64 = 60;
 
 const BALL_RADIUS : f64 = 10.0;
 const BALL_COLOR : [f32; 4] = [1.0, 1.0, 1.0, 1.0];
+const BALL_VELOCITY_INC : f64 = -1.0;
 
 const PADDLE_WIDTH : f64 = 10.0;
 const PADDLE_HEIGHT : f64 = 80.0;
@@ -114,7 +115,7 @@ fn main() {
         ball: Ball { 
             pos: Vec2f { x: 400.0, y: 300.0 }, 
             radius: BALL_RADIUS, 
-            velocity: Vec2f { x: 0.0, y: 0.0 } 
+            velocity: Vec2f { x: BALL_VELOCITY_INC, y: BALL_VELOCITY_INC } 
         },
         paddle_left: Paddle { 
             pos: Vec2f { x: 100.0, y: 250.0 }, 
@@ -159,6 +160,53 @@ fn draw_bbox(element: &dyn GameElement, context: &Context, g2d: &mut G2d) {
         context.transform, g2d);
 }
 
+fn is_out_of_bounds(bbox: &BBox) -> bool {
+    is_out_of_bounds_on_width(bbox) || is_out_of_bounds_on_height(bbox)
+}
+
+fn is_out_of_bounds_on_width(bbox: &BBox) -> bool {
+    let max_w = WINDOW_WIDTH as f64;
+    bbox.ll.x < 0.0 || bbox.ur.x > max_w
+}
+
+fn is_out_of_bounds_on_height(bbox: &BBox) -> bool {
+    let max_h = WINDOW_HEIGHT as f64;
+    bbox.ll.y < 0.0 || bbox.ur.y > max_h
+}
+
+fn has_collision(bbox_a: &BBox, bbox_b: &BBox) -> bool {
+    bbox_a.ll.x <= bbox_b.ur.x && bbox_a.ur.x >= bbox_b.ll.x && bbox_a.ll.y <= bbox_b.ur.y && bbox_a.ur.y >= bbox_b.ll.y
+}
+
+fn get_bounce_direction(ball_velocity: &Vec2f, ball_bbox: &BBox, bbox: &BBox) -> Vec2f {
+
+    let ball_center : Vec2f = get_bbox_center(ball_bbox);
+    let bbox_center : Vec2f = get_bbox_center(bbox);
+    let mut bounce_direction : Vec2f = Vec2f { x: 1.0, y: 1.0 };
+
+    if ball_velocity.x > 0.0 && ball_center.x < bbox_center.x  {
+        bounce_direction.x = -1.0;
+    } 
+    if ball_velocity.y > 0.0 && ball_center.y < bbox_center.y {
+        bounce_direction.y = -1.0;
+    }
+
+    bounce_direction
+}
+
+fn get_bbox_center(bbox: &BBox) -> Vec2f {
+    Vec2f { x: ((bbox.ur.x - bbox.ll.x) / 2.0) + bbox.ll.x, y: ((bbox.ur.y - bbox.ll.y) / 2.0) + bbox.ll.y }
+}
+
+fn clamp(value: f64, min: f64, max: f64) -> f64 {
+    if value < min {
+        return min;
+    } else if value > max {
+        return max;
+    }
+    value
+}
+
 fn handle_input(event: &Event, game_state: &mut GameState) {
 
     // on key press
@@ -186,10 +234,36 @@ fn handle_bot(game_state: &mut GameState) {
 }
 
 fn update_game(game_state: &mut GameState) {
+
+    let min = 0.0;
+    let max_w = WINDOW_WIDTH as f64;
+    let max_h = WINDOW_HEIGHT as f64;
+
     // move paddle
-    game_state.get_paddle_left().pos.y += game_state.get_paddle_left().velocity.y;
-    game_state.get_paddle_right().pos.y += game_state.get_paddle_right().velocity.y;
+    game_state.get_paddle_left().pos.y = clamp( game_state.get_paddle_left().pos.y + game_state.get_paddle_left().velocity.y, min, max_h - game_state.get_paddle_left().size.y );
+    game_state.get_paddle_right().pos.y = clamp( game_state.get_paddle_right().pos.y + game_state.get_paddle_right().velocity.y, min, max_h - game_state.get_paddle_right().size.y );
 
     // move ball
-    // TODO
+    game_state.get_ball().pos.x += game_state.get_ball().velocity.x;
+    game_state.get_ball().pos.y += game_state.get_ball().velocity.y;
+
+    // handle collisions
+    let mut ball_velocity = Vec2f { x: game_state.get_ball().velocity.x, y: game_state.get_ball().velocity.y };
+
+    if is_out_of_bounds_on_width(&game_state.get_ball().get_bbox()) {
+        ball_velocity.x *= -1.0;
+    }
+    if is_out_of_bounds_on_height(&game_state.get_ball().get_bbox()) {
+        ball_velocity.y *= -1.0;
+    }
+
+    if has_collision(&game_state.get_ball().get_bbox(), &game_state.get_paddle_left().get_bbox()) {
+        // how to determine the direction?
+        let bounce_direction : Vec2f = get_bounce_direction(&ball_velocity, &game_state.get_ball().get_bbox(), &game_state.get_paddle_left().get_bbox());
+        ball_velocity.y = bounce_direction.x * BALL_VELOCITY_INC;
+        ball_velocity.x = bounce_direction.y * BALL_VELOCITY_INC;
+    }
+
+    game_state.get_ball().velocity = ball_velocity;
+
 }
