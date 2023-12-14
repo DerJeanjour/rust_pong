@@ -1,4 +1,4 @@
-use piston_window::*;
+use piston_window::{*, types::Vec2d};
 
 const WINDOW_WIDTH : u32 = 800;
 const WINDOW_HEIGHT : u32 = 600;
@@ -19,36 +19,59 @@ enum PlayerType {
     BOT
 }
 
-struct Paddle {
+struct Vec2f {
     x: f64,
     y: f64,
-    velocity_y: f64,
+}
+
+struct BBox {
+    ll: Vec2f,
+    ur: Vec2f
+}
+
+trait GameElement {
+    fn get_bbox(&self) -> BBox;
+    fn draw(&self, context: &Context, g2d: &mut G2d);
+}
+
+struct Paddle {
+    pos: Vec2f,
+    size: Vec2f,
+    velocity: Vec2f,
     player_type: PlayerType
 }
 
 impl Paddle {
-    fn render(&self, context: &Context, g2d: &mut G2d) {
-        rectangle(PADDLE_COLOR,
-                  [self.x, self.y, PADDLE_WIDTH, PADDLE_HEIGHT],
-                  context.transform, g2d);
-    }
     fn is_human(&self) -> bool {
         matches!(self.player_type, PlayerType::HUMAN)
     }
 }
 
-struct Ball {
-    x: f64,
-    y: f64,
-    velocity_x: f64,
-    velocity_y: f64,
+impl GameElement for Paddle {
+    fn get_bbox(&self) -> BBox {
+        BBox { ll: Vec2f { x: self.pos.x, y: self.pos.y }, ur: Vec2f { x: self.pos.x + self.size.x, y: self.pos.y + self.size.y } }
+    }
+    fn draw(&self, context: &Context, g2d: &mut G2d) {
+        rectangle(PADDLE_COLOR,
+            [self.pos.x, self.pos.y, self.size.x, self.size.y],
+            context.transform, g2d);
+    }
 }
 
-impl Ball {
-    fn render(&self, context: &Context, g2d: &mut G2d) {
+struct Ball {
+    pos: Vec2f,
+    radius: f64,
+    velocity: Vec2f
+}
+
+impl GameElement for Ball {
+    fn get_bbox(&self) -> BBox {
+        BBox { ll: Vec2f { x: self.pos.x-self.radius, y: self.pos.y-self.radius }, ur: Vec2f { x: self.pos.x+self.radius, y: self.pos.y+self.radius } }
+    }
+    fn draw(&self, context: &Context, g2d: &mut G2d) {
         ellipse(BALL_COLOR,
-                [self.x - BALL_RADIUS, self.y - BALL_RADIUS, BALL_RADIUS * 2.0, BALL_RADIUS * 2.0],
-                context.transform, g2d);
+            [self.pos.x - self.radius, self.pos.y - self.radius, self.radius * 2.0, self.radius * 2.0],
+            context.transform, g2d);
     }
 }
 
@@ -70,10 +93,10 @@ impl GameState {
     }
     fn set_human_paddle_velocity(&mut self, velocity_y: f64) {
         if self.paddle_left.is_human() {
-            self.paddle_left.velocity_y = velocity_y;
+            self.paddle_left.velocity.y = velocity_y;
         }
         if self.paddle_right.is_human() {
-            self.paddle_right.velocity_y = velocity_y;
+            self.paddle_right.velocity.y = velocity_y;
         }
     }
 }
@@ -88,9 +111,23 @@ fn main() {
     window.set_ups(WINDOW_FPS);
 
     let mut game_state = GameState { 
-        ball: Ball { x: 400.0, y: 300.0, velocity_x: 0.0, velocity_y: 0.0 },
-        paddle_left: Paddle { x: 100.0, y: 250.0,  velocity_y: 0.0, player_type: PlayerType::HUMAN },
-        paddle_right: Paddle { x: 700.0, y: 250.0,  velocity_y: 0.0, player_type: PlayerType::BOT }
+        ball: Ball { 
+            pos: Vec2f { x: 400.0, y: 300.0 }, 
+            radius: BALL_RADIUS, 
+            velocity: Vec2f { x: 0.0, y: 0.0 } 
+        },
+        paddle_left: Paddle { 
+            pos: Vec2f { x: 100.0, y: 250.0 }, 
+            size: Vec2f { x: PADDLE_WIDTH, y: PADDLE_HEIGHT }, 
+            velocity: Vec2f {  x: 0.0, y: 0.0 }, 
+            player_type: PlayerType::HUMAN 
+        },
+        paddle_right: Paddle { 
+            pos: Vec2f { x: 700.0, y: 250.0 }, 
+            size: Vec2f { x: PADDLE_WIDTH, y: PADDLE_HEIGHT }, 
+            velocity: Vec2f {  x: 0.0, y: 0.0 }, 
+            player_type: PlayerType::BOT 
+        }
     };
 
     while let Some( event) = window.next() {
@@ -100,13 +137,26 @@ fn main() {
         update_game(&mut game_state);
 
         window.draw_2d(&event, |context, g2d, _| {
+
             clear(BACKGROUND_COLOR, g2d);
-            game_state.get_paddle_left().render(&context, g2d);
-            game_state.get_paddle_right().render(&context, g2d);
-            game_state.get_ball().render(&context, g2d);
+
+            game_state.get_paddle_left().draw(&context, g2d);
+            game_state.get_paddle_right().draw(&context, g2d);
+            game_state.get_ball().draw(&context, g2d);
+
+            draw_bbox(game_state.get_paddle_left(), &context, g2d);
+            draw_bbox(game_state.get_paddle_right(), &context, g2d);
+            draw_bbox(game_state.get_ball(), &context, g2d);
         });
 
     }
+}
+
+fn draw_bbox(element: &dyn GameElement, context: &Context, g2d: &mut G2d) {
+    let bbox = element.get_bbox();
+    rectangle([1.0, 0.0, 0.0, 0.2],
+        [bbox.ll.x, bbox.ll.y, bbox.ur.x - bbox.ll.x, bbox.ur.y - bbox.ll.y],
+        context.transform, g2d);
 }
 
 fn handle_input(event: &Event, game_state: &mut GameState) {
@@ -137,8 +187,8 @@ fn handle_bot(game_state: &mut GameState) {
 
 fn update_game(game_state: &mut GameState) {
     // move paddle
-    game_state.get_paddle_left().y += game_state.get_paddle_left().velocity_y;
-    game_state.get_paddle_right().y += game_state.get_paddle_right().velocity_y;
+    game_state.get_paddle_left().pos.y += game_state.get_paddle_left().velocity.y;
+    game_state.get_paddle_right().pos.y += game_state.get_paddle_right().velocity.y;
 
     // move ball
     // TODO
