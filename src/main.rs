@@ -1,4 +1,5 @@
 use piston_window::*;
+use rand::Rng;
 
 const WINDOW_WIDTH : u32 = 800;
 const WINDOW_HEIGHT : u32 = 600;
@@ -10,7 +11,7 @@ const BLUE : [f32; 4] = [0.0,0.0,1.0,1.0];
 
 const BALL_RADIUS : f64 = 10.0;
 const BALL_COLOR : [f32; 4] = [1.0, 1.0, 1.0, 1.0];
-const BALL_VELOCITY_INC : f64 = 1.0;
+const BALL_VELOCITY_INC : f64 = 1.5;
 
 const PADDLE_WIDTH : f64 = 10.0;
 const PADDLE_HEIGHT : f64 = 160.0;
@@ -55,61 +56,10 @@ impl ToString for Vec2f {
     }
 }
 
-struct BBoxSide {
-    a: Vec2f,
-    b: Vec2f,
-    normal: Vec2f
-}
-
-impl BBoxSide {
-    fn get_reflect_vec(&self, dir: &Vec2f) -> Vec2f {
-        let dot_product = dir.dot(&self.normal);
-        Vec2f {
-            x: dir.x - 2.0 * dot_product * self.normal.x,
-            y: dir.y - 2.0 * dot_product * self.normal.y,
-        }.normalize()
-    }
-}
 
 struct BBox {
     min: Vec2f,
     max: Vec2f
-}
-
-impl BBox {
-    fn center(&self) -> Vec2f {
-        Vec2f { x: ((self.max.x - self.min.x) / 2.0) + self.min.x, y: ((self.max.y - self.min.y) / 2.0) + self.min.y }
-    }
-    fn get_side(&self, dir: Direction) -> BBoxSide {
-
-        let tl = Vec2f { x: self.min.x, y: self.min.y };
-        let tr = Vec2f { x: self.max.x, y: self.min.y };
-        let ll = Vec2f { x: self.min.x, y: self.max.y };
-        let lr = Vec2f { x: self.max.x, y: self.max.y };
-
-        let mut a = ZERO_VEC.clone();
-        let mut b = ZERO_VEC.clone();
-
-        match dir {
-            Direction::UP => {
-                a = tl;
-                b = tr;
-            }
-            Direction::DOWN => {
-                a = ll;
-                b = lr;
-            }
-            Direction::RIGHT => {
-                a = tr;
-                b = lr;
-            }
-            Direction::LEFT => {
-                a = tl;
-                b = ll;
-            }
-        }
-        BBoxSide { a: a, b: b, normal: dir.vector() }
-    }
 }
 
 enum Direction {
@@ -130,6 +80,7 @@ impl Direction {
     }
 }
 
+#[derive(Clone)]
 enum PlayerType {
     HUMAN,
     BOT
@@ -140,6 +91,7 @@ trait GameElement {
     fn draw(&self, context: &Context, g2d: &mut G2d);
 }
 
+#[derive(Clone)]
 struct Paddle {
     pos: Vec2f,
     size: Vec2f,
@@ -164,6 +116,7 @@ impl GameElement for Paddle {
     }
 }
 
+#[derive(Clone)]
 struct Ball {
     pos: Vec2f,
     radius: f64,
@@ -205,6 +158,14 @@ impl GameState {
             self.paddle_right.velocity.y = velocity_y;
         }
     }
+    fn set_bot_paddle_velocity(&mut self, velocity_y: f64) {
+        if !self.paddle_left.is_human() {
+            self.paddle_left.velocity.y = velocity_y;
+        }
+        if !self.paddle_right.is_human() {
+            self.paddle_right.velocity.y = velocity_y;
+        }
+    }
 }
 
 fn main() {
@@ -219,9 +180,9 @@ fn main() {
 
     let mut game_state = GameState { 
         ball: Ball { 
-            pos: Vec2f { x: 400.0, y: 300.0 }, 
+            pos: ZERO_VEC, 
             radius: BALL_RADIUS, 
-            velocity: Vec2f { x: -BALL_VELOCITY_INC, y: -BALL_VELOCITY_INC } 
+            velocity: ZERO_VEC
         },
         paddle_left: Paddle { 
             pos: Vec2f { x: 100.0, y: 250.0 }, 
@@ -237,11 +198,15 @@ fn main() {
         }
     };
 
+    new_round(&mut game_state);
     while let Some( event) = window.next() {
 
         handle_input(&event, &mut game_state);
         handle_bot(&mut game_state);
-        update_game(&mut game_state);
+        let reset = update_game(&mut game_state);
+        if reset {
+            new_round(&mut game_state);
+        }
 
         window.draw_2d(&event, |context, g2d, _| {
 
@@ -250,88 +215,18 @@ fn main() {
             game_state.get_paddle_left().draw(&context, g2d);
             game_state.get_paddle_right().draw(&context, g2d);
             game_state.get_ball().draw(&context, g2d);
-
-            draw_bbox(game_state.get_paddle_left(), &context, g2d);
-            draw_bbox(game_state.get_paddle_right(), &context, g2d);
-            draw_bbox(game_state.get_ball(), &context, g2d);
         });
 
     }
 }
 
-fn draw_bbox(element: &dyn GameElement, context: &Context, g2d: &mut G2d) {
-    let bbox = element.get_bbox();
-    rectangle([1.0, 0.0, 0.0, 0.2],
-        [bbox.min.x, bbox.min.y, bbox.max.x - bbox.min.x, bbox.max.y - bbox.min.y],
-        context.transform, g2d);
-}
-
-fn is_out_of_bounds(bbox: &BBox) -> bool {
-    is_out_of_bounds_on_width(bbox) || is_out_of_bounds_on_height(bbox)
-}
-
-fn is_out_of_bounds_on_width(bbox: &BBox) -> bool {
-    let max_w = WINDOW_WIDTH as f64;
-    bbox.min.x < 0.0 || bbox.max.x > max_w
-}
-
-fn is_out_of_bounds_on_height(bbox: &BBox) -> bool {
-    let max_h = WINDOW_HEIGHT as f64;
-    bbox.min.y < 0.0 || bbox.max.y > max_h
-}
-
-fn has_collision(bbox_a: &BBox, bbox_b: &BBox) -> bool {
-    bbox_a.min.x <= bbox_b.max.x && bbox_a.max.x >= bbox_b.min.x && bbox_a.min.y <= bbox_b.max.y && bbox_a.max.y >= bbox_b.min.y
-}
-
-fn get_playground_bounce_direction(ball_velocity: &Vec2f, ball_bbox: &BBox) -> Vec2f {
-    let mut bounce_direction = ball_velocity.normalize();
-    if is_out_of_bounds_on_width(&ball_bbox) {
-        bounce_direction.x *= -1.0;
-    }
-    if is_out_of_bounds_on_height(&ball_bbox) {
-        bounce_direction.y *= -1.0;
-    }
-    bounce_direction
-}
-
-fn get_paddle_bounce_direction(ball_velocity: &Vec2f, ball_bbox: &BBox, bbox: &BBox) -> Vec2f {
-
-    let right_bbox : BBoxSide = bbox.get_side(Direction::RIGHT);
-    let left_ball_bbox : BBoxSide = ball_bbox.get_side(Direction::LEFT);
-    if right_bbox.a.x > left_ball_bbox.a.x {
-        return right_bbox.get_reflect_vec(&ball_velocity);
-    }
-
-    let left_bbox : BBoxSide = bbox.get_side(Direction::LEFT);
-    let right_ball_bbox : BBoxSide = ball_bbox.get_side(Direction::RIGHT);
-    if left_bbox.a.x < right_ball_bbox.a.x {
-        return left_bbox.get_reflect_vec(&ball_velocity);
-    }
-
-    let top_bbox : BBoxSide = bbox.get_side(Direction::UP);
-    let bottom_ball_bbox : BBoxSide = ball_bbox.get_side(Direction::DOWN);
-    if top_bbox.a.y < bottom_ball_bbox.a.y {
-        return top_bbox.get_reflect_vec(&ball_velocity);
-    }
-
-    let bottom_bbox : BBoxSide = bbox.get_side(Direction::DOWN);
-    let top_ball_bbox : BBoxSide = ball_bbox.get_side(Direction::UP);
-    if bottom_bbox.a.y > top_ball_bbox.a.y {
-        return bottom_bbox.get_reflect_vec(&ball_velocity);
-    }
-
-    ZERO_VEC
-
-}
-
-fn clamp(value: f64, min: f64, max: f64) -> f64 {
-    if value < min {
-        return min;
-    } else if value > max {
-        return max;
-    }
-    value
+fn new_round( game_state : &mut GameState  ) {
+    let mut rng = rand::thread_rng();
+    game_state.ball.pos = Vec2f { x: ( WINDOW_WIDTH / 2 ) as f64, y: ( WINDOW_HEIGHT / 2 ) as f64 };
+    game_state.ball.velocity = Vec2f { 
+        x: rng.gen_range(-1.0..1.0) * BALL_VELOCITY_INC, 
+        y: rng.gen_range(-1.0..1.0) * BALL_VELOCITY_INC 
+    };
 }
 
 fn handle_input(event: &Event, game_state: &mut GameState) {
@@ -360,38 +255,78 @@ fn handle_bot(game_state: &mut GameState) {
     // TODO
 }
 
-fn update_game(game_state: &mut GameState) {
+fn update_game(game_state: &mut GameState) -> bool {
 
-    let min = 0.0;
-    let max_w = WINDOW_WIDTH as f64;
-    let max_h = WINDOW_HEIGHT as f64;
+    // immutable game elements
+    let ball = game_state.get_ball().clone();
+    let left_paddle = game_state.get_paddle_left().clone();
+    let right_paddle = game_state.get_paddle_right().clone();
 
     // move paddle
-    game_state.get_paddle_left().pos.y = clamp( game_state.get_paddle_left().pos.y + game_state.get_paddle_left().velocity.y, min, max_h - game_state.get_paddle_left().size.y );
-    game_state.get_paddle_right().pos.y = clamp( game_state.get_paddle_right().pos.y + game_state.get_paddle_right().velocity.y, min, max_h - game_state.get_paddle_right().size.y );
+    const max_h : f64 = WINDOW_HEIGHT as f64;
+    game_state.get_paddle_left().pos.y = ( left_paddle.pos.y + left_paddle.velocity.y ).clamp( 0.0, max_h - left_paddle.size.y );
+    game_state.get_paddle_right().pos.y = ( right_paddle.pos.y + right_paddle.velocity.y ).clamp( 0.0, max_h - right_paddle.size.y );
+
+    
+
+    // handle ball out of bounds on width
+    if is_out_of_bounds_on_width( &ball.get_bbox() ) {
+        return true; // early break, signal new round
+    }
+
+    let mut bounce_direction = ball.velocity.normalize();
+
+    // handle ball out of bounds on height
+    if is_out_of_bounds_on_height( &ball.get_bbox() ) {
+        bounce_direction.y *= -1.0;
+    }
+
+    // handle collision with left paddle
+    if has_collision(&ball.get_bbox(), &left_paddle.get_bbox()) {
+        bounce_direction = reflect(&ball.velocity, &Direction::RIGHT.vector());
+    }
+
+    // handle collision with right paddle
+    if has_collision(&ball.get_bbox(), &right_paddle.get_bbox()) {
+        bounce_direction = reflect(&ball.velocity, &Direction::LEFT.vector());
+    }
+
+    // update ball velocity
+    game_state.get_ball().velocity.x = bounce_direction.x * BALL_VELOCITY_INC;
+    game_state.get_ball().velocity.y = bounce_direction.y * BALL_VELOCITY_INC;
+    //game_state.get_ball().velocity = ball_velocity;
 
     // move ball
     game_state.get_ball().pos.x += game_state.get_ball().velocity.x;
     game_state.get_ball().pos.y += game_state.get_ball().velocity.y;
 
-    // check bounces
-    let mut ball_velocity = game_state.get_ball().velocity.clone();
-    let mut bounce_direction = ball_velocity.normalize();
+    false
+}
 
-    if is_out_of_bounds( &game_state.get_ball().get_bbox() ) {
-        bounce_direction = get_playground_bounce_direction(&ball_velocity, &game_state.get_ball().get_bbox());
-    }
+// ----- UTILS -----
 
-    if has_collision(&game_state.get_ball().get_bbox(), &game_state.get_paddle_left().get_bbox()) {
-        bounce_direction = get_paddle_bounce_direction(&ball_velocity, &game_state.get_ball().get_bbox(), &game_state.get_paddle_left().get_bbox());
-    }
+fn is_out_of_bounds(bbox: &BBox) -> bool {
+    is_out_of_bounds_on_width(bbox) || is_out_of_bounds_on_height(bbox)
+}
 
-    if has_collision(&game_state.get_ball().get_bbox(), &game_state.get_paddle_right().get_bbox()) {
-        bounce_direction = get_paddle_bounce_direction(&ball_velocity, &game_state.get_ball().get_bbox(), &game_state.get_paddle_right().get_bbox());
-    }
+fn is_out_of_bounds_on_width(bbox: &BBox) -> bool {
+    let max_w = WINDOW_WIDTH as f64;
+    bbox.min.x < 0.0 || bbox.max.x > max_w
+}
 
-    // update ball velocity
-    ball_velocity.x = bounce_direction.x * BALL_VELOCITY_INC;
-    ball_velocity.y = bounce_direction.y * BALL_VELOCITY_INC;
-    game_state.get_ball().velocity = ball_velocity;
+fn is_out_of_bounds_on_height(bbox: &BBox) -> bool {
+    let max_h = WINDOW_HEIGHT as f64;
+    bbox.min.y < 0.0 || bbox.max.y > max_h
+}
+
+fn has_collision(bbox_a: &BBox, bbox_b: &BBox) -> bool {
+    bbox_a.min.x <= bbox_b.max.x && bbox_a.max.x >= bbox_b.min.x && bbox_a.min.y <= bbox_b.max.y && bbox_a.max.y >= bbox_b.min.y
+}
+
+fn reflect(dir: &Vec2f, normal: &Vec2f) -> Vec2f {
+    let dot_product = dir.dot(normal);
+    Vec2f {
+        x: dir.x - 2.0 * dot_product * normal.x,
+        y: dir.y - 2.0 * dot_product * normal.y,
+    }.normalize()
 }
