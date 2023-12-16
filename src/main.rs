@@ -11,7 +11,7 @@ const BLUE : [f32; 4] = [0.0,0.0,1.0,1.0];
 
 const BALL_RADIUS : f64 = 10.0;
 const BALL_COLOR : [f32; 4] = [1.0, 1.0, 1.0, 1.0];
-const BALL_VELOCITY_INC : f64 = 1.5;
+const BALL_VELOCITY_INC : f64 = 2.0;
 
 const PADDLE_WIDTH : f64 = 10.0;
 const PADDLE_HEIGHT : f64 = 160.0;
@@ -41,6 +41,12 @@ impl Vec2f {
     }
     fn dot(&self, vec : &Vec2f) -> f64 {
         self.x * vec.x + self.y * vec.y
+    }
+    fn distance(&self, vec : &Vec2f) -> f64 {
+        self.sub(&vec).length()
+    }
+    fn same_dir(&self, vec : &Vec2f) -> bool {
+        self.dot(vec) >= 0.0
     }
     fn mul(&self, factor : f64) -> Vec2f {
         Vec2f{ x: self.x * factor, y: self.y * factor }
@@ -104,7 +110,10 @@ struct Paddle {
 
 impl GameElement for Paddle {
     fn get_bbox(&self) -> BBox {
-        BBox { min: Vec2f { x: self.pos.x, y: self.pos.y }, max: Vec2f { x: self.pos.x + self.size.x, y: self.pos.y + self.size.y } }
+        BBox { 
+            min: Vec2f { x: self.pos.x, y: self.pos.y }, 
+            max: Vec2f { x: self.pos.x + self.size.x, y: self.pos.y + self.size.y } 
+        }
     }
     fn draw(&self, context: &Context, g2d: &mut G2d) {
         rectangle(PADDLE_COLOR,
@@ -122,7 +131,10 @@ struct Ball {
 
 impl GameElement for Ball {
     fn get_bbox(&self) -> BBox {
-        BBox { min: Vec2f { x: self.pos.x-self.radius, y: self.pos.y-self.radius }, max: Vec2f { x: self.pos.x+self.radius, y: self.pos.y+self.radius } }
+        BBox { 
+            min: Vec2f { x: self.pos.x-self.radius, y: self.pos.y-self.radius }, 
+            max: Vec2f { x: self.pos.x+self.radius, y: self.pos.y+self.radius } 
+        }
     }
     fn draw(&self, context: &Context, g2d: &mut G2d) {
         ellipse(BALL_COLOR,
@@ -143,14 +155,6 @@ impl GameState {
             self.paddle_left.velocity.y = velocity_y;
         }
         if matches!(self.paddle_right.player_type, PlayerType::HUMAN) {
-            self.paddle_right.velocity.y = velocity_y;
-        }
-    }
-    fn set_bot_paddle_velocity_y(&mut self, velocity_y: f64) {
-        if matches!(self.paddle_left.player_type, PlayerType::BOT) {
-            self.paddle_left.velocity.y = velocity_y;
-        }
-        if matches!(self.paddle_right.player_type, PlayerType::BOT) {
             self.paddle_right.velocity.y = velocity_y;
         }
     }
@@ -232,6 +236,7 @@ fn handle_input(event: &Event, game_state: &mut GameState) {
         match key {
             Key::Up => game_state.set_human_paddle_velocity_y(-PADDLE_VELOCITY_INC),
             Key::Down => game_state.set_human_paddle_velocity_y(PADDLE_VELOCITY_INC),
+            Key::Space => new_round(game_state),
             _ => {}
         }
     }
@@ -258,9 +263,9 @@ fn handle_bot(event: &Event, game_state: &mut GameState) {
     }
 
     for bot in bot_paddles {
-        let distance = game_state.ball.pos.sub(&bot.pos).length();
+        let distance = game_state.ball.pos.distance(&bot.pos);
         if distance < 300.0 {
-            let paddle_height_offset = PADDLE_HEIGHT / 2.0; // paddle height offset to center
+            let paddle_height_offset = bot.size.y / 2.0; // paddle height offset to center
             if game_state.ball.pos.y > bot.pos.y + paddle_height_offset {
                 bot.velocity = Direction::DOWN.vector().mul(PADDLE_VELOCITY_INC);
             }
@@ -283,8 +288,10 @@ fn update_game(event: &Event, game_state: &mut GameState) -> bool {
 
     // move paddle
     const max_h : f64 = WINDOW_HEIGHT as f64;
-    game_state.paddle_left.pos.y = ( left_paddle.pos.y + left_paddle.velocity.y * get_delta(event) ).clamp( 0.0, max_h - left_paddle.size.y );
-    game_state.paddle_right.pos.y = ( right_paddle.pos.y + right_paddle.velocity.y * get_delta(event) ).clamp( 0.0, max_h - right_paddle.size.y );
+    let left_paddle_velocity = left_paddle.pos.y + left_paddle.velocity.y * get_delta(event);
+    let right_paddle_velocity = right_paddle.pos.y + right_paddle.velocity.y * get_delta(event);
+    game_state.paddle_left.pos.y = left_paddle_velocity.clamp( 0.0, max_h - left_paddle.size.y );
+    game_state.paddle_right.pos.y = right_paddle_velocity.clamp( 0.0, max_h - right_paddle.size.y );
 
     // handle ball out of bounds on width
     if is_out_of_bounds_on_width( &ball.get_bbox() ) {
@@ -311,7 +318,6 @@ fn update_game(event: &Event, game_state: &mut GameState) -> bool {
     // update ball velocity
     game_state.ball.velocity.x = bounce_direction.x * BALL_VELOCITY_INC;
     game_state.ball.velocity.y = bounce_direction.y * BALL_VELOCITY_INC;
-    //game_state.ball.velocity = ball_velocity;
 
     // move ball
     game_state.ball.pos.x += game_state.ball.velocity.x * get_delta(event);
@@ -341,6 +347,12 @@ fn has_collision(bbox_a: &BBox, bbox_b: &BBox) -> bool {
 }
 
 fn reflect(dir: &Vec2f, normal: &Vec2f) -> Vec2f {
+
+    if normal.same_dir(&dir) {
+        // if direction is the same, dont reflect
+        return dir.normalize();
+    }
+
     let dot_product = dir.dot(normal);
     Vec2f {
         x: dir.x - 2.0 * dot_product * normal.x,
