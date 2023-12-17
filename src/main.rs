@@ -12,11 +12,15 @@ const BLUE : [f32; 4] = [0.0,0.0,1.0,1.0];
 const BALL_RADIUS : f64 = 10.0;
 const BALL_COLOR : [f32; 4] = [1.0, 1.0, 1.0, 1.0];
 const BALL_VELOCITY_INC : f64 = 2.0;
+const BALL_BOUNCE_VELOCITY_INC : f64 = 0.02;
 
 const PADDLE_WIDTH : f64 = 10.0;
 const PADDLE_HEIGHT : f64 = 160.0;
 const PADDLE_COLOR : [f32; 4] = [1.0, 1.0, 1.0, 1.0];
-const PADDLE_VELOCITY_INC : f64 = 2.0;
+const PADDLE_VELOCITY_INC : f64 = 1.8;
+const PADDLE_VELOCITY_IMPACT_ON_BALL :f64 = 0.2;
+
+const BOT_VIEW_DISTANCE : f64 = 300.0;
 
 const BACKGROUND_COLOR : [f32; 4] = [0.1, 0.1, 0.1, 1.0];
 
@@ -45,8 +49,8 @@ impl Vec2f {
     fn distance(&self, vec : &Vec2f) -> f64 {
         self.sub(&vec).length()
     }
-    fn same_dir(&self, vec : &Vec2f) -> bool {
-        self.dot(vec) >= 0.0
+    fn faces(&self, vec : &Vec2f) -> bool {
+        self.dot(vec) < 0.0
     }
     fn mul(&self, factor : f64) -> Vec2f {
         Vec2f{ x: self.x * factor, y: self.y * factor }
@@ -71,6 +75,7 @@ struct BBox {
     max: Vec2f
 }
 
+#[derive(Clone)]
 enum Direction {
     LEFT,
     RIGHT,
@@ -90,8 +95,8 @@ impl Direction {
 }
 
 #[derive(Clone)]
-enum PlayerType {
-    HUMAN,
+enum ControlType {
+    PLAYER,
     BOT
 }
 
@@ -105,7 +110,8 @@ struct Paddle {
     pos: Vec2f,
     size: Vec2f,
     velocity: Vec2f,
-    player_type: PlayerType
+    player_type: ControlType,
+    dir: Direction
 }
 
 impl GameElement for Paddle {
@@ -146,15 +152,20 @@ impl GameElement for Ball {
 struct GameState {
     ball: Ball,
     paddle_left: Paddle,
-    paddle_right: Paddle
+    paddle_right: Paddle,
+    round: i32,
+    round_bounces: i32,
+    last_win: i32, // 0=no win / neg=left / pos=right
+    score_left: i32,
+    score_right: i32
 }
 
 impl GameState {
     fn set_human_paddle_velocity_y(&mut self, velocity_y: f64) {
-        if matches!(self.paddle_left.player_type, PlayerType::HUMAN) {
+        if matches!(self.paddle_left.player_type, ControlType::PLAYER) {
             self.paddle_left.velocity.y = velocity_y;
         }
-        if matches!(self.paddle_right.player_type, PlayerType::HUMAN) {
+        if matches!(self.paddle_right.player_type, ControlType::PLAYER) {
             self.paddle_right.velocity.y = velocity_y;
         }
     }
@@ -180,23 +191,36 @@ fn main() {
             pos: Vec2f { x: WINDOW_WIDTH as f64 * 0.1, y: WINDOW_HEIGHT as f64 / 2.0 }, 
             size: Vec2f { x: PADDLE_WIDTH, y: PADDLE_HEIGHT }, 
             velocity: Vec2f {  x: 0.0, y: 0.0 }, 
-            player_type: PlayerType::HUMAN 
+            player_type: ControlType::PLAYER,
+            dir: Direction::RIGHT,
         },
         paddle_right: Paddle { 
             pos: Vec2f { x: WINDOW_WIDTH as f64 * 0.9, y: WINDOW_HEIGHT as f64 / 2.0 }, 
             size: Vec2f { x: PADDLE_WIDTH, y: PADDLE_HEIGHT }, 
             velocity: Vec2f {  x: 0.0, y: 0.0 }, 
-            player_type: PlayerType::BOT 
-        }
+            player_type: ControlType::BOT,
+            dir: Direction::LEFT
+        },
+        round: 0,
+        round_bounces: 0,
+        last_win: 0,
+        score_left: 0,
+        score_right: 0
     };
 
     new_round(&mut game_state);
     while let Some( event) = window.next() {
 
         handle_input(&event, &mut game_state);
-        handle_bot(&event, &mut game_state);
-        let trigger_new_round = update_game(&event, &mut game_state);
-        if trigger_new_round {
+        handle_bot(&mut game_state);
+        let won_round = update_game(&mut game_state);
+        if won_round != 0 {
+            game_state.last_win = won_round;
+            if won_round < 0 {
+                game_state.score_left += 1;
+            } else {
+                game_state.score_right += 1;
+            }
             new_round(&mut game_state);
         }
 
@@ -212,21 +236,28 @@ fn main() {
     }
 }
 
-fn get_delta(event: &Event) -> f64 {
-    let mut delta : f64 = 1.0 / WINDOW_FPS as f64; // estimation
-    if let Some(update_args) = event.update_args() {
-        delta = update_args.dt; // actual delta
-    }
-    delta * WINDOW_FPS as f64
-}
-
 fn new_round( game_state : &mut GameState  ) {
+
+    let mut x_dir = -1.0;
+    if game_state.last_win != 0 {
+        x_dir = game_state.last_win as f64;
+    }
+
     let mut rng = rand::thread_rng();
+    let mut y_dir = -1.0;
+    if rng.gen_range(0.0..1.0) >= 0.5 {
+        y_dir = 1.0;
+    }
+
+    game_state.round += 1;
+    game_state.round_bounces = 0;
     game_state.ball.pos = Vec2f { x: ( WINDOW_WIDTH / 2 ) as f64, y: ( WINDOW_HEIGHT / 2 ) as f64 };
     game_state.ball.velocity = Vec2f { 
-        x: rng.gen_range(-1.0..1.0) * BALL_VELOCITY_INC, 
-        y: rng.gen_range(-1.0..1.0) * BALL_VELOCITY_INC 
+        x: x_dir * BALL_VELOCITY_INC, 
+        y: rng.gen_range(0.2..0.8) * y_dir * BALL_VELOCITY_INC 
     };
+
+    println!("Round {} with score: left {} / right {}", game_state.round, game_state.score_left, game_state.score_right);
 }
 
 fn handle_input(event: &Event, game_state: &mut GameState) {
@@ -252,19 +283,21 @@ fn handle_input(event: &Event, game_state: &mut GameState) {
 
 }
 
-fn handle_bot(event: &Event, game_state: &mut GameState) {
+fn handle_bot(game_state: &mut GameState) {
 
     let mut bot_paddles : Vec<&mut Paddle> = Vec::new();
-    if matches!(game_state.paddle_left.player_type, PlayerType::BOT) {
+    if matches!(game_state.paddle_left.player_type, ControlType::BOT) {
         bot_paddles.push(&mut game_state.paddle_left);
     }
-    if matches!(game_state.paddle_right.player_type, PlayerType::BOT) {
+    if matches!(game_state.paddle_right.player_type, ControlType::BOT) {
         bot_paddles.push(&mut game_state.paddle_right);
     }
 
     for bot in bot_paddles {
-        let distance = game_state.ball.pos.distance(&bot.pos);
-        if distance < 300.0 {
+        let ball_x = Vec2f{ x: game_state.ball.pos.x, y: 0.0 };
+        let bot_x = Vec2f{ x: bot.pos.x, y: 0.0 };
+        let distance = ball_x.distance(&bot_x);
+        if distance < BOT_VIEW_DISTANCE && bot.dir.vector().faces(&game_state.ball.velocity) {
             let paddle_height_offset = bot.size.y / 2.0; // paddle height offset to center
             if game_state.ball.pos.y > bot.pos.y + paddle_height_offset {
                 bot.velocity = Direction::DOWN.vector().mul(PADDLE_VELOCITY_INC);
@@ -279,7 +312,7 @@ fn handle_bot(event: &Event, game_state: &mut GameState) {
     
 }
 
-fn update_game(event: &Event, game_state: &mut GameState) -> bool {
+fn update_game(game_state: &mut GameState) -> i32 {
 
     // immutable game elements
     let ball = game_state.ball.clone();
@@ -287,15 +320,19 @@ fn update_game(event: &Event, game_state: &mut GameState) -> bool {
     let right_paddle = game_state.paddle_right.clone();
 
     // move paddle
-    const max_h : f64 = WINDOW_HEIGHT as f64;
-    let left_paddle_velocity = left_paddle.pos.y + left_paddle.velocity.y * get_delta(event);
-    let right_paddle_velocity = right_paddle.pos.y + right_paddle.velocity.y * get_delta(event);
-    game_state.paddle_left.pos.y = left_paddle_velocity.clamp( 0.0, max_h - left_paddle.size.y );
-    game_state.paddle_right.pos.y = right_paddle_velocity.clamp( 0.0, max_h - right_paddle.size.y );
+    const MAX_H : f64 = WINDOW_HEIGHT as f64;
+    let left_paddle_velocity = left_paddle.pos.y + left_paddle.velocity.y;
+    let right_paddle_velocity = right_paddle.pos.y + right_paddle.velocity.y;
+    game_state.paddle_left.pos.y = left_paddle_velocity.clamp( 0.0, MAX_H - left_paddle.size.y );
+    game_state.paddle_right.pos.y = right_paddle_velocity.clamp( 0.0, MAX_H - right_paddle.size.y );
 
     // handle ball out of bounds on width
     if is_out_of_bounds_on_width( &ball.get_bbox() ) {
-        return true; // early break, signal new round
+        // early break, signal new round
+        if Direction::LEFT.vector().faces(&ball.velocity) {
+            return -1; // left won round
+        }
+        return 1; // right won round
     }
 
     let mut bounce_direction = ball.velocity.normalize();
@@ -305,25 +342,30 @@ fn update_game(event: &Event, game_state: &mut GameState) -> bool {
         bounce_direction.y *= -1.0;
     }
 
-    // handle collision with left paddle
-    if has_collision(&ball.get_bbox(), &left_paddle.get_bbox()) {
-        bounce_direction = reflect(&ball.velocity, &Direction::RIGHT.vector());
-    }
-
-    // handle collision with right paddle
-    if has_collision(&ball.get_bbox(), &right_paddle.get_bbox()) {
-        bounce_direction = reflect(&ball.velocity, &Direction::LEFT.vector());
+    // handle paddle collisions
+    for paddle in [&game_state.paddle_left, &game_state.paddle_right] {
+        if has_collision(&ball.get_bbox(), &paddle.get_bbox()) {
+            // get bounce direction
+            bounce_direction = reflect(&ball.velocity, &paddle.dir.vector());
+            // add player velocity impact
+            bounce_direction = bounce_direction.add(&paddle.velocity.mul(PADDLE_VELOCITY_IMPACT_ON_BALL));
+            game_state.round_bounces += 1;
+            println!( "Round bounces: {}", game_state.round_bounces );
+        }
     }
 
     // update ball velocity
-    game_state.ball.velocity.x = bounce_direction.x * BALL_VELOCITY_INC;
-    game_state.ball.velocity.y = bounce_direction.y * BALL_VELOCITY_INC;
+    bounce_direction = bounce_direction.normalize();
+    let round_bounce_factor = game_state.round_bounces as f64 * BALL_BOUNCE_VELOCITY_INC + 1.0;
+    let velocity_factor = BALL_VELOCITY_INC * round_bounce_factor;
+    game_state.ball.velocity.x = bounce_direction.x * velocity_factor;
+    game_state.ball.velocity.y = bounce_direction.y * velocity_factor;
 
     // move ball
-    game_state.ball.pos.x += game_state.ball.velocity.x * get_delta(event);
-    game_state.ball.pos.y += game_state.ball.velocity.y * get_delta(event);
+    game_state.ball.pos.x += game_state.ball.velocity.x;
+    game_state.ball.pos.y += game_state.ball.velocity.y;
 
-    false
+    0
 }
 
 // ----- UTILS -----
@@ -348,7 +390,7 @@ fn has_collision(bbox_a: &BBox, bbox_b: &BBox) -> bool {
 
 fn reflect(dir: &Vec2f, normal: &Vec2f) -> Vec2f {
 
-    if normal.same_dir(&dir) {
+    if !normal.faces(&dir) {
         // if direction is the same, dont reflect
         return dir.normalize();
     }
