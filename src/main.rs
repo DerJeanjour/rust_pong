@@ -162,17 +162,6 @@ struct GameState {
     score_right: i32
 }
 
-impl GameState {
-    fn set_human_paddle_velocity_y(&mut self, velocity_y: f64) {
-        if matches!(self.paddle_left.player_type, ControlType::PLAYER) {
-            self.paddle_left.velocity.y = velocity_y;
-        }
-        if matches!(self.paddle_right.player_type, ControlType::PLAYER) {
-            self.paddle_right.velocity.y = velocity_y;
-        }
-    }
-}
-
 fn main() {
 
     // init window
@@ -296,11 +285,20 @@ fn new_round( game_state : &mut GameState  ) {
 
 fn handle_input(event: &Event, game_state: &mut GameState) {
 
+    let mut player_paddle_velocity_y = 0.0;
+    let mut changed_velocity = false;
+
     // on key press
     if let Some(Button::Keyboard(key)) = event.press_args() {
         match key {
-            Key::Up => game_state.set_human_paddle_velocity_y(-PADDLE_VELOCITY_INC),
-            Key::Down => game_state.set_human_paddle_velocity_y(PADDLE_VELOCITY_INC),
+            Key::Up => {
+                player_paddle_velocity_y = -PADDLE_VELOCITY_INC;
+                changed_velocity = true;
+            },
+            Key::Down => {
+                player_paddle_velocity_y = PADDLE_VELOCITY_INC;
+                changed_velocity = true;
+            },
             Key::Space => {
                 game_state.last_win = 0;
                 new_round(game_state);
@@ -312,10 +310,20 @@ fn handle_input(event: &Event, game_state: &mut GameState) {
     // on key release
     if let Some(Button::Keyboard(key)) = event.release_args() {
         match key {
-            Key::Up => game_state.set_human_paddle_velocity_y(0.0),
-            Key::Down => game_state.set_human_paddle_velocity_y(0.0),
+            Key::Up | Key::Down => {
+                player_paddle_velocity_y = 0.0;
+                changed_velocity = true;
+            },
             _ => {}
         }
+    }
+
+    // update player velocity
+    if changed_velocity && matches!(game_state.paddle_left.player_type, ControlType::PLAYER) {
+        game_state.paddle_left.velocity.y = player_paddle_velocity_y;
+    }
+    if changed_velocity && matches!(game_state.paddle_right.player_type, ControlType::PLAYER) {
+        game_state.paddle_right.velocity.y = player_paddle_velocity_y;
     }
 
 }
