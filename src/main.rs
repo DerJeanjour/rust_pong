@@ -14,7 +14,7 @@ const BALL_COLOR : [f32; 4] = [1.0, 1.0, 1.0, 1.0];
 const BALL_VELOCITY_INC : f64 = 2.0;
 const BALL_BOUNCE_VELOCITY_INC : f64 = 0.1;
 
-const CONTROL_LEFT : ControlType = ControlType::PLAYER;
+const CONTROL_LEFT : ControlType = ControlType::BOT;
 const CONTROL_RIGHT : ControlType = ControlType::BOT;
 
 const PADDLE_WIDTH : f64 = 10.0;
@@ -229,7 +229,7 @@ fn main() {
             draw_text(&format!("-{}-", game_state.round), &context, g2d, &mut fonts, round_count_pos);
 
             let bounce_count_pos = Vec2f { x: (WINDOW_WIDTH / 2) as f64, y: WINDOW_HEIGHT as f64 - 20.0 };  
-            draw_text(&format!("x{:.2}", get_rounce_bounce_factor(&game_state)), &context, g2d, &mut fonts, bounce_count_pos);
+            draw_text(&format!("x{:.2}", get_round_bounce_factor(&game_state)), &context, g2d, &mut fonts, bounce_count_pos);
 
             let score_left_pos = Vec2f { x: 30.0, y: FONT_SIZE + 10.0 };  
             draw_text(&game_state.score_left.to_string(), &context, g2d, &mut fonts, score_left_pos);
@@ -407,7 +407,7 @@ fn update_game(game_state: &mut GameState) -> i32 {
 
     // update ball velocity
     bounce_direction = bounce_direction.normalize();
-    let round_bounce_factor = get_rounce_bounce_factor(&game_state);
+    let round_bounce_factor = get_round_bounce_factor(&game_state);
     let velocity_factor = BALL_VELOCITY_INC * round_bounce_factor;
     game_state.ball.velocity.x = bounce_direction.x * velocity_factor;
     game_state.ball.velocity.y = bounce_direction.y * velocity_factor;
@@ -448,6 +448,6 @@ fn reflect(dir: &Vec2f, normal: &Vec2f) -> Vec2f {
     }.normalize()
 }
 
-fn get_rounce_bounce_factor(game_state: &GameState) -> f64 {
+fn get_round_bounce_factor(game_state: &GameState) -> f64 {
     game_state.round_bounces as f64 * BALL_BOUNCE_VELOCITY_INC + 1.0
 }
