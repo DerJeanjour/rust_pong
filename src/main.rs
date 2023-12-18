@@ -5,14 +5,17 @@ const WINDOW_WIDTH : u32 = 800;
 const WINDOW_HEIGHT : u32 = 600;
 const WINDOW_FPS : u64 = 60;
 
-const RED : [f32; 4] = [1.0,0.0,0.0,1.0];
-const GREEN : [f32; 4] = [0.0,1.0,0.0,1.0];
-const BLUE : [f32; 4] = [0.0,0.0,1.0,1.0];
+const FONT_SIZE : f64 = 24.0;
+const FONT_COLOR : [f32; 4] = [1.0, 1.0, 1.0, 1.0];
+const FONT_PATH : &str = "assets/8bitOperatorPlus-Bold.ttf";
 
 const BALL_RADIUS : f64 = 10.0;
 const BALL_COLOR : [f32; 4] = [1.0, 1.0, 1.0, 1.0];
 const BALL_VELOCITY_INC : f64 = 2.0;
-const BALL_BOUNCE_VELOCITY_INC : f64 = 0.02;
+const BALL_BOUNCE_VELOCITY_INC : f64 = 0.1;
+
+const CONTROL_LEFT : ControlType = ControlType::PLAYER;
+const CONTROL_RIGHT : ControlType = ControlType::BOT;
 
 const PADDLE_WIDTH : f64 = 10.0;
 const PADDLE_HEIGHT : f64 = 160.0;
@@ -173,14 +176,16 @@ impl GameState {
 
 fn main() {
 
+    // init window
     let mut window: PistonWindow = WindowSettings::new("Pong", [WINDOW_WIDTH, WINDOW_HEIGHT])
         .exit_on_esc(true)
         .build()
         .unwrap();
-
     window.set_max_fps(WINDOW_FPS);
     window.set_ups(WINDOW_FPS);
+    let mut glyphs = Glyphs::new(FONT_PATH,window.create_texture_context(),TextureSettings::new(),).unwrap();
 
+    // init game state
     let mut game_state = GameState { 
         ball: Ball { 
             pos: ZERO_VEC, 
@@ -191,14 +196,14 @@ fn main() {
             pos: Vec2f { x: WINDOW_WIDTH as f64 * 0.1, y: WINDOW_HEIGHT as f64 / 2.0 }, 
             size: Vec2f { x: PADDLE_WIDTH, y: PADDLE_HEIGHT }, 
             velocity: Vec2f {  x: 0.0, y: 0.0 }, 
-            player_type: ControlType::PLAYER,
+            player_type: CONTROL_LEFT,
             dir: Direction::RIGHT,
         },
         paddle_right: Paddle { 
             pos: Vec2f { x: WINDOW_WIDTH as f64 * 0.9, y: WINDOW_HEIGHT as f64 / 2.0 }, 
             size: Vec2f { x: PADDLE_WIDTH, y: PADDLE_HEIGHT }, 
             velocity: Vec2f {  x: 0.0, y: 0.0 }, 
-            player_type: ControlType::BOT,
+            player_type: CONTROL_RIGHT,
             dir: Direction::LEFT
         },
         round: 0,
@@ -207,48 +212,84 @@ fn main() {
         score_left: 0,
         score_right: 0
     };
-
     new_round(&mut game_state);
+
+    // render loop
     while let Some( event) = window.next() {
 
+        // handle game logic
         handle_input(&event, &mut game_state);
         handle_bot(&mut game_state);
         let won_round = update_game(&mut game_state);
         if won_round != 0 {
             game_state.last_win = won_round;
-            if won_round < 0 {
-                game_state.score_left += 1;
-            } else {
-                game_state.score_right += 1;
-            }
             new_round(&mut game_state);
         }
 
-        window.draw_2d(&event, |context, g2d, _| {
+        // render game
+        window.draw_2d(&event, |context, g2d, device| {
 
             clear(BACKGROUND_COLOR, g2d);
 
+            // draw game elements
             game_state.paddle_left.draw(&context, g2d);
             game_state.paddle_right.draw(&context, g2d);
             game_state.ball.draw(&context, g2d);
+
+            // draw UI
+            let round_count_pos = Vec2f { x: (WINDOW_WIDTH / 2) as f64, y: FONT_SIZE + 10.0 };  
+            draw_text(&format!("-{}-", game_state.round), &context, g2d, &mut glyphs, round_count_pos);
+
+            let bounce_count_pos = Vec2f { x: (WINDOW_WIDTH / 2) as f64, y: WINDOW_HEIGHT as f64 - 20.0 };  
+            draw_text(&format!("x{:.2}", get_rounce_bounce_factor(&game_state)), &context, g2d, &mut glyphs, bounce_count_pos);
+
+            let score_left_pos = Vec2f { x: 30.0, y: FONT_SIZE + 10.0 };  
+            draw_text(&game_state.score_left.to_string(), &context, g2d, &mut glyphs, score_left_pos);
+
+            let score_right_pos = Vec2f { x: WINDOW_WIDTH as f64 - 30.0, y: FONT_SIZE + 10.0 };  
+            draw_text(&game_state.score_right.to_string(), &context, g2d, &mut glyphs, score_right_pos);
+            
+            glyphs.factory.encoder.flush(device);
+
         });
 
     }
 }
 
+fn draw_text(text: &str, context: &Context, g2d: &mut G2d,glyphs: &mut Glyphs, pos: Vec2f) {
+    let x_offset = glyphs.width(FONT_SIZE as u32, &text).unwrap() / 2 as f64;
+    text::Text::new_color(FONT_COLOR, FONT_SIZE as u32)
+        .draw(
+            text,
+            glyphs,
+            &context.draw_state,
+            context.transform.trans(pos.x - x_offset, pos.y),
+            g2d,
+        )
+        .unwrap();
+}
+
 fn new_round( game_state : &mut GameState  ) {
 
+    // ball x direction
     let mut x_dir = -1.0;
     if game_state.last_win != 0 {
         x_dir = game_state.last_win as f64;
     }
 
+    // ball y direction
     let mut rng = rand::thread_rng();
     let mut y_dir = -1.0;
     if rng.gen_range(0.0..1.0) >= 0.5 {
         y_dir = 1.0;
     }
 
+    // update game states
+    if game_state.last_win < 0 {
+        game_state.score_left += 1;
+    } else if game_state.last_win > 0 {
+        game_state.score_right += 1;
+    }
     game_state.round += 1;
     game_state.round_bounces = 0;
     game_state.ball.pos = Vec2f { x: ( WINDOW_WIDTH / 2 ) as f64, y: ( WINDOW_HEIGHT / 2 ) as f64 };
@@ -257,7 +298,6 @@ fn new_round( game_state : &mut GameState  ) {
         y: rng.gen_range(0.2..0.8) * y_dir * BALL_VELOCITY_INC 
     };
 
-    println!("Round {} with score: left {} / right {}", game_state.round, game_state.score_left, game_state.score_right);
 }
 
 fn handle_input(event: &Event, game_state: &mut GameState) {
@@ -267,7 +307,10 @@ fn handle_input(event: &Event, game_state: &mut GameState) {
         match key {
             Key::Up => game_state.set_human_paddle_velocity_y(-PADDLE_VELOCITY_INC),
             Key::Down => game_state.set_human_paddle_velocity_y(PADDLE_VELOCITY_INC),
-            Key::Space => new_round(game_state),
+            Key::Space => {
+                game_state.last_win = 0;
+                new_round(game_state);
+            },
             _ => {}
         }
     }
@@ -285,6 +328,7 @@ fn handle_input(event: &Event, game_state: &mut GameState) {
 
 fn handle_bot(game_state: &mut GameState) {
 
+    // collect bot paddles
     let mut bot_paddles : Vec<&mut Paddle> = Vec::new();
     if matches!(game_state.paddle_left.player_type, ControlType::BOT) {
         bot_paddles.push(&mut game_state.paddle_left);
@@ -293,10 +337,16 @@ fn handle_bot(game_state: &mut GameState) {
         bot_paddles.push(&mut game_state.paddle_right);
     }
 
+    // update bot paddle velocities
     for bot in bot_paddles {
+
         let ball_x = Vec2f{ x: game_state.ball.pos.x, y: 0.0 };
         let bot_x = Vec2f{ x: bot.pos.x, y: 0.0 };
         let distance = ball_x.distance(&bot_x);
+
+        // only move bot in y direction of ball if:
+        // 1. ball is in view distance
+        // 2. ball is moving towards paddle
         if distance < BOT_VIEW_DISTANCE && bot.dir.vector().faces(&game_state.ball.velocity) {
             let paddle_height_offset = bot.size.y / 2.0; // paddle height offset to center
             if game_state.ball.pos.y > bot.pos.y + paddle_height_offset {
@@ -350,13 +400,12 @@ fn update_game(game_state: &mut GameState) -> i32 {
             // add player velocity impact
             bounce_direction = bounce_direction.add(&paddle.velocity.mul(PADDLE_VELOCITY_IMPACT_ON_BALL));
             game_state.round_bounces += 1;
-            println!( "Round bounces: {}", game_state.round_bounces );
         }
     }
 
     // update ball velocity
     bounce_direction = bounce_direction.normalize();
-    let round_bounce_factor = game_state.round_bounces as f64 * BALL_BOUNCE_VELOCITY_INC + 1.0;
+    let round_bounce_factor = get_rounce_bounce_factor(&game_state);
     let velocity_factor = BALL_VELOCITY_INC * round_bounce_factor;
     game_state.ball.velocity.x = bounce_direction.x * velocity_factor;
     game_state.ball.velocity.y = bounce_direction.y * velocity_factor;
@@ -366,12 +415,6 @@ fn update_game(game_state: &mut GameState) -> i32 {
     game_state.ball.pos.y += game_state.ball.velocity.y;
 
     0
-}
-
-// ----- UTILS -----
-
-fn is_out_of_bounds(bbox: &BBox) -> bool {
-    is_out_of_bounds_on_width(bbox) || is_out_of_bounds_on_height(bbox)
 }
 
 fn is_out_of_bounds_on_width(bbox: &BBox) -> bool {
@@ -400,4 +443,8 @@ fn reflect(dir: &Vec2f, normal: &Vec2f) -> Vec2f {
         x: dir.x - 2.0 * dot_product * normal.x,
         y: dir.y - 2.0 * dot_product * normal.y,
     }.normalize()
+}
+
+fn get_rounce_bounce_factor(game_state: &GameState) -> f64 {
+    game_state.round_bounces as f64 * BALL_BOUNCE_VELOCITY_INC + 1.0
 }
